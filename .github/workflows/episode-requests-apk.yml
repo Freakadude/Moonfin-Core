@@ -1,0 +1,108 @@
+# Builds "Moonfin Test", the episode-requests version of the Android/Google TV
+# app, and publishes it as a GitHub release. It installs next to the Play Store
+# app. Latest APK:
+#   https://github.com/Freakadude/Moonfin-Core/releases/latest/download/Moonfin-Test.apk
+name: Episode requests APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/episode-requests]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: episode-requests-apk
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.47.2'
+  # A separate application id, so this installs next to the Play Store app
+  # instead of over it. It also leaves Firebase push out (see build.gradle.kts).
+  MOONFIN_TEST_ID_SUFFIX: '.episodes'
+
+jobs:
+  apk:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Set up signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_TYPE: ${{ secrets.ANDROID_KEYSTORE_TYPE }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::The signing secrets are missing, so updates couldn't install over each other."
+            exit 1
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/release.keystore
+          cat > android/keystore.properties <<EOF
+          storeFile=../release.keystore
+          storeType=$STORE_TYPE
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          keytool -list -keystore android/app/release.keystore -storetype "$STORE_TYPE" -storepass "$STORE_PASSWORD" >/dev/null
+
+      - name: Limit Gradle memory
+        run: |
+          mkdir -p ~/.gradle
+          cat >> ~/.gradle/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx4G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m -XX:+HeapDumpOnOutOfMemoryError
+          kotlin.daemon.jvmargs=-Xmx2G
+          EOF
+
+      - name: Version
+        id: meta
+        run: |
+          VERSION_LINE=$(grep '^version:' pubspec.yaml | sed 's/version:[[:space:]]*//' | tr -d '[:space:]')
+          BASE=$(printf '%s' "$VERSION_LINE" | cut -d'+' -f1)
+          # Every run gets a higher build number, so Android takes it as an update.
+          echo "name=${BASE}-ep.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "number=$((1000 + ${{ github.run_number }}))" >> "$GITHUB_OUTPUT"
+          echo "tag=apk-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Analyze the changed files
+        run: |
+          flutter pub get
+          flutter analyze --no-fatal-infos \
+            lib/data/models/sonarr_episode.dart \
+            lib/data/repositories/episode_request_repository.dart \
+            lib/ui/screens/detail/episode_requests \
+            lib/ui/screens/detail/minimalist
+
+      - name: Build APK
+        run: |
+          flutter build apk --release \
+            --flavor mobile \
+            --build-name "${{ steps.meta.outputs.name }}" \
+            --build-number "${{ steps.meta.outputs.number }}" \
+            --dart-define=DISTRIBUTION_CHANNEL=apk
+          cp build/app/outputs/flutter-apk/app-mobile-release.apk Moonfin-Test.apk
+          ls -la Moonfin-Test.apk
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.meta.outputs.tag }}" Moonfin-Test.apk \
+            --target "$GITHUB_SHA" \
+            --title "Moonfin Test ${{ steps.meta.outputs.name }} (episode requests)" \
+            --notes "Personal build of Moonfin with single-episode requests to Sonarr. Installs next to the Play Store app as Moonfin Test. Latest APK: https://github.com/${{ github.repository }}/releases/latest/download/Moonfin-Test.apk" \
+            --latest

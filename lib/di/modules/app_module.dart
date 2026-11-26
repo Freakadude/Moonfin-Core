@@ -13,6 +13,7 @@ import '../../auth/store/authentication_store.dart';
 import '../../auth/store/credential_store.dart';
 import '../../data/repositories/anime_marker_repository.dart';
 import '../../data/repositories/calendar_repository.dart';
+import '../../data/repositories/episode_request_repository.dart';
 import '../../data/repositories/poster_badge_repository.dart';
 import '../../data/repositories/mdblist_repository.dart';
 import '../../data/repositories/multi_server_repository.dart';
@@ -362,6 +363,10 @@ void _registerUserScopedSingletons() {
   );
   _getIt.registerLazySingleton(
     () => TmdbRepository(_getIt<MediaServerClient>()),
+    dispose: (repository) => repository.dispose(),
+  );
+  _getIt.registerLazySingleton(
+    () => EpisodeRequestRepository(_getIt<MediaServerClient>()),
     dispose: (repository) => repository.dispose(),
   );
   _getIt.registerLazySingleton(

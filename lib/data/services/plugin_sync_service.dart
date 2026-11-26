@@ -183,6 +183,12 @@ class PluginSyncService extends ChangeNotifier {
   bool _arrQueueAvailable = false;
   bool get arrQueueAvailable => _pluginAvailable && _arrQueueAvailable;
 
+  /// Whether this user may see and request missing episodes from Sonarr. The
+  /// plugin only says so for Jellyfin admins, and older plugins leave it out.
+  bool _episodeRequestsAvailable = false;
+  bool get episodeRequestsAvailable =>
+      _pluginAvailable && _episodeRequestsAvailable;
+
   /// Whether the server will take an uploaded diagnostic report. An older
   /// plugin, or none at all, leaves it false.
   bool _clientLogSupported = false;
@@ -330,6 +336,7 @@ class PluginSyncService extends ChangeNotifier {
     _calendarDaysAhead = 90;
     _calendarReminders = false;
     _arrQueueAvailable = false;
+    _episodeRequestsAvailable = false;
     _clientLogSupported = false;
     _pushSupported = false;
     if (!keepIncompleteRecordings) _incompleteRecordings?.setSupported(false);
@@ -446,6 +453,8 @@ class PluginSyncService extends ChangeNotifier {
       _calendarDaysAhead = _readCount(pingResult, 'calendarDaysAhead') ?? 90;
       _calendarReminders = _readBool(pingResult, 'calendarReminders') ?? false;
       _arrQueueAvailable = _readBool(pingResult, 'arrQueueAvailable') ?? false;
+      _episodeRequestsAvailable =
+          _readBool(pingResult, 'episodeRequestsAvailable') ?? false;
       // Older plugins leave this out, which reads as false and hides the button.
       _messages?.setSupported(
         _readBool(pingResult, 'messagesSupported') ?? false,

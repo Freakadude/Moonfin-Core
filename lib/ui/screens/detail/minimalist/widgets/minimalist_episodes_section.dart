@@ -18,6 +18,8 @@ import '../../../../widgets/scroll_edge_arrows.dart';
 import '../../../../widgets/sliding_pill_tabs.dart';
 import '../../detail_episode_images.dart';
 import '../../detail_layout_metrics.dart';
+import '../../episode_requests/missing_episode_dialog.dart';
+import '../../episode_requests/sonarr_season_controller.dart';
 import '../../play_item_on_screen.dart';
 import 'minimalist_episode_card.dart';
 
@@ -84,16 +86,69 @@ class _MinimalistEpisodesSectionState extends State<MinimalistEpisodesSection> {
   bool get _isSeason => _vm.item?.type == 'Season';
   bool get _isEpisode => _vm.item?.type == 'Episode';
 
+  /// Sonarr's view of the season on screen, for admins on a server whose
+  /// Moonbase can request single episodes. Null for everyone else.
+  SonarrSeasonController? _sonarr;
+
+  String? get _seriesId => _isSeries ? _vm.item?.id : _vm.item?.seriesId;
+
   @override
   void initState() {
     super.initState();
     _beginEpisodesLoad();
+    if (SonarrSeasonController.available) {
+      _sonarr = SonarrSeasonController()..addListener(_onSonarrChanged);
+    }
   }
 
   @override
   void dispose() {
+    _sonarr
+      ?..removeListener(_onSonarrChanged)
+      ..dispose();
     _railController.dispose();
     super.dispose();
+  }
+
+  void _onSonarrChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// The season's library episodes with Sonarr's missing ones slotted in. A
+  /// virtual episode Jellyfin made for the same number gives way to Sonarr's,
+  /// which can be requested.
+  List<AggregatedItem> _withMissing(List<AggregatedItem> library, int? season) {
+    final sonarr = _sonarr;
+    if (sonarr == null || season == null) return library;
+    final missing = [
+      for (final e in sonarr.missingFromLibrary)
+        if (e.seasonNumber == season) e,
+    ];
+    if (missing.isEmpty) return library;
+    final numbers = {for (final e in missing) e.episodeNumber};
+    return [
+      for (final item in library)
+        if (!(item.rawData['LocationType'] == 'Virtual' &&
+            numbers.contains(item.indexNumber)))
+          item,
+      for (final e in missing) sonarr.placeholderFor(e),
+    ]..sort(ItemDetailViewModel.compareEpisodes);
+  }
+
+  /// A missing episode shows what Sonarr knows and offers the request.
+  Future<void> _openMissing(BuildContext context, AggregatedItem item) async {
+    final sonarr = _sonarr;
+    final id = sonarrEpisodeIdOf(item);
+    if (sonarr == null || id == null || sonarr.requesting) return;
+    final episode = sonarr.byId(id);
+    if (episode == null) return;
+    final ids = await showMissingEpisodeDialog(
+      context,
+      episode: episode,
+      requestable: sonarr.requestable,
+    );
+    if (ids == null || ids.isEmpty || !context.mounted) return;
+    await runEpisodeRequest(context, sonarr, ids);
   }
 
   /// A Season already carries its own episodes. A Series, or one episode of
@@ -171,12 +226,20 @@ class _MinimalistEpisodesSectionState extends State<MinimalistEpisodesSection> {
   }
 
   void _showEpisodeMenu(BuildContext context, AggregatedItem episode) {
+    if (isSonarrPlaceholder(episode)) {
+      unawaited(_openMissing(context, episode));
+      return;
+    }
     showContextMenu(context, episode, onChanged: () => setState(() {}));
   }
 
   // From an episode the one picked takes its page, so Back leaves the run of
   // episodes in one press.
   void _openEpisode(BuildContext context, AggregatedItem episode) {
+    if (isSonarrPlaceholder(episode)) {
+      unawaited(_openMissing(context, episode));
+      return;
+    }
     if (episode.id == _vm.item?.id) {
       playItemOnScreen(context);
       return;
@@ -238,10 +301,18 @@ class _MinimalistEpisodesSectionState extends State<MinimalistEpisodesSection> {
 
     // The server lists specials where they aired among the seasons, so the
     // Specials tab would come out of number order without this.
-    final episodes = selected == null
+    final library = selected == null
         ? all
         : (all.where((e) => e.parentIndexNumber == selected).toList()
             ..sort(ItemDetailViewModel.compareEpisodes));
+
+    // Sonarr is asked about the season on screen. Its answer arrives later and
+    // rebuilds this with the missing episodes in place.
+    final seriesId = _seriesId;
+    if (_sonarr != null && selected != null && seriesId != null) {
+      _sonarr!.show(seriesId, selected);
+    }
+    final episodes = _withMissing(library, selected);
     final hubKey = _hubKey(selected);
 
     // One season is no choice at all, so the strip only earns its space when
@@ -317,20 +388,30 @@ class _MinimalistEpisodesSectionState extends State<MinimalistEpisodesSection> {
                     return widget.onVerticalNavigation?.call(isUp) ?? false;
                   },
                   itemBuilder: (context, episode, index, isFocused) {
+                    final sonarrId = sonarrEpisodeIdOf(episode);
+                    final missing = sonarrId == null
+                        ? null
+                        : _sonarr?.byId(sonarrId);
                     return MinimalistEpisodeCard(
                       episode: episode,
                       width: cardWidth,
                       isFocused: isFocused,
                       isCurrent: _isEpisode && episode.id == _vm.item?.id,
-                      imageUrl: minimalistEpisodeImageUrl(
-                        episode,
-                        _vm,
-                        prefs: widget.prefs,
-                        cardWidth: cardWidth,
-                        devicePixelRatio: MediaQuery.devicePixelRatioOf(
-                          context,
-                        ),
-                      ),
+                      imageUrl: missing != null
+                          ? missing.imageUrl
+                          : minimalistEpisodeImageUrl(
+                              episode,
+                              _vm,
+                              prefs: widget.prefs,
+                              cardWidth: cardWidth,
+                              devicePixelRatio: MediaQuery.devicePixelRatioOf(
+                                context,
+                              ),
+                            ),
+                      statusLabel: missing == null
+                          ? null
+                          : EpisodeRequestText.state(missing),
+                      dimmed: missing != null,
                       onTap: () => _openEpisode(context, episode),
                       onLongPress: () => _showEpisodeMenu(context, episode),
                     );

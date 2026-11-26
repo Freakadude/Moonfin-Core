@@ -27,6 +27,13 @@ class MinimalistEpisodeCard extends StatefulWidget {
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
+  /// Where a missing episode stands in Sonarr, such as "Missing" or
+  /// "Downloading 42%". Shown over the artwork when set.
+  final String? statusLabel;
+
+  /// Draws the artwork faded, for an episode that isn't in the library.
+  final bool dimmed;
+
   const MinimalistEpisodeCard({
     super.key,
     required this.episode,
@@ -36,6 +43,8 @@ class MinimalistEpisodeCard extends StatefulWidget {
     this.isCurrent = false,
     this.onTap,
     this.onLongPress,
+    this.statusLabel,
+    this.dimmed = false,
   });
 
   @override
@@ -93,7 +102,19 @@ class _MinimalistEpisodeCardState extends State<MinimalistEpisodeCard> {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        _buildImage(),
+                        widget.dimmed
+                            ? Opacity(opacity: 0.4, child: _buildImage())
+                            : _buildImage(),
+                        if (widget.statusLabel != null)
+                          Positioned(
+                            left: 8,
+                            top: 8,
+                            right: 8,
+                            child: Align(
+                              alignment: Alignment.topLeft,
+                              child: _StatusBadge(label: widget.statusLabel!),
+                            ),
+                          ),
                         if (number != null)
                           Positioned(
                             left: 8,
@@ -163,6 +184,33 @@ class _MinimalistEpisodeCardState extends State<MinimalistEpisodeCard> {
       ),
     ),
   );
+}
+
+class _StatusBadge extends StatelessWidget {
+  final String label;
+
+  const _StatusBadge({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      decoration: BoxDecoration(
+        color: AppColorScheme.accent.withValues(alpha: 0.92),
+        borderRadius: AppRadius.circular(10),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
+          fontSize: 14,
+        ),
+      ),
+    );
+  }
 }
 
 class _NumberBadge extends StatelessWidget {
