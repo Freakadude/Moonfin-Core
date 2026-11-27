@@ -75,12 +75,15 @@ class SonarrEpisode {
   /// On disk according to Sonarr, but Jellyfin hasn't picked it up yet.
   bool get waitingForJellyfin => hasFile && !inLibrary;
 
-  /// Something a request can still help with.
+  /// Something a request can still help with. An episode only Sonarr thinks
+  /// is on disk counts too: its file may have been deleted, and a request
+  /// rescans Sonarr first, so it searches only when the file is really gone.
   bool get canRequest =>
-      !hasFile &&
-      (state == SonarrEpisodeState.missing ||
-          state == SonarrEpisodeState.requested ||
-          state == SonarrEpisodeState.failed);
+      waitingForJellyfin ||
+      (!hasFile &&
+          (state == SonarrEpisodeState.missing ||
+              state == SonarrEpisodeState.requested ||
+              state == SonarrEpisodeState.failed));
 
   static SonarrEpisode? fromJson(Object? raw) {
     if (raw is! Map) return null;

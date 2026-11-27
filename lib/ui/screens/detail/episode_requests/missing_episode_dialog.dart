@@ -41,8 +41,9 @@ abstract final class EpisodeRequestText {
   /// A longer line for the dialog, saying what the status means.
   static String explain(SonarrEpisode e) {
     if (e.waitingForJellyfin) {
-      return 'Sonarr has the file. Jellyfin is scanning the series for it, and it '
-          'shows up here as soon as Jellyfin has it.';
+      return 'Sonarr lists a file Jellyfin doesn\'t have. Both are checking again: '
+          'a new download shows up here in a moment, and a deleted file turns '
+          'this into Missing. Requesting it checks right away.';
     }
     return switch (e.state) {
       SonarrEpisodeState.missing => 'Not in your library and not requested.',
