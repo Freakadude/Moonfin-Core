@@ -1,0 +1,70 @@
+# Every day, moves the personal episode-requests build of the Moonfin app onto the latest
+# official release, checks it and publishes it, or opens an issue when it can't (see
+# .github/scripts/follow-upstream.sh). Needs the AUTOMATION_TOKEN secret.
+name: Follow upstream releases
+
+on:
+  schedule:
+    - cron: '0 5 * * *' # daily, 05:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: follow-upstream
+  cancel-in-progress: false
+
+jobs:
+  follow:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - name: Check the token
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
+          ISSUE_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "$GH_TOKEN" ]; then exit 0; fi
+          title="⚠ Action needed: the automation token is missing"
+          if ! GH_TOKEN="$ISSUE_TOKEN" gh issue list -R "$GITHUB_REPOSITORY" --state all --limit 200 --json title -q '.[].title' | grep -Fxq "$title"; then
+            GH_TOKEN="$ISSUE_TOKEN" gh issue create -R "$GITHUB_REPOSITORY" --title "$title" \
+              --body "The daily update check needs the AUTOMATION_TOKEN secret (Settings → Secrets and variables → Actions). Until it's there, nothing updates automatically."
+          fi
+          exit 1
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.AUTOMATION_TOKEN }}
+
+      - name: Keep the script
+        run: cp .github/scripts/follow-upstream.sh "$RUNNER_TEMP/follow-upstream.sh"
+
+      # The Flutter version the official app builds with on its main branch.
+      - name: Flutter version
+        id: flutter
+        run: |
+          git fetch -q https://github.com/Moonfin-Client/Moonfin-Core.git main
+          version=$(git show FETCH_HEAD:.github/workflows/build.yml | grep -oPm1 "FLUTTER_VERSION: '\K[^']+")
+          echo "version=${version:-3.47.2}" >> "$GITHUB_OUTPUT"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          cache: true
+
+      - name: Follow the official releases
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
+          UPSTREAM: Moonfin-Client/Moonfin-Core
+          UPSTREAM_BRANCH: main
+          DEFAULT_BRANCH: main
+          FEATURE: feature/episode-requests
+          LABEL: Moonfin app
+          TEST_CMD: flutter pub get && flutter analyze --no-fatal-infos --no-fatal-warnings lib
+          FEATURE_WORDS: 'request(ing)? (an |single |individual |missing )?episodes?|episode requests?|single episodes?|individual episodes?'
+          FEATURE_CODE: '\bEpisodeSearch\b|Sonarr/Episodes|requestEpisode'
+          AFTER_UPDATE: 'Next time Moonfin starts on the Shield or the projector, it offers the update: press **Install update**, then **Install**. The Moonbase plugin is rebuilt with the new Moonfin Web as well.'
+        run: bash "$RUNNER_TEMP/follow-upstream.sh"
