@@ -403,6 +403,10 @@ class MainActivity : AudioServiceActivity(), GamepadsCompatibleActivity {
             flutterEngine.dartExecutor.binaryMessenger,
             DeviceStorageHelper.CHANNEL,
         ).setMethodCallHandler(DeviceStorageHelper())
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            AppUpdateInstaller.CHANNEL,
+        ).setMethodCallHandler(AppUpdateInstaller(this))
 
         val exitHistory = ProcessExitHistory.get(this)
         MethodChannel(

@@ -7,7 +7,10 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/services/app_update_service.dart';
 import '../../l10n/app_localizations.dart';
+import '../../util/apk_installer.dart';
 import '../../util/platform_detection.dart';
+import '../navigation/app_router.dart';
+import 'app_update_dialog.dart';
 import 'status_banner_pill.dart';
 
 /// Floating glass pill announcing a newer GitHub release. Mirrors the offline
@@ -71,6 +74,16 @@ class _AppUpdateBannerState extends State<AppUpdateBanner>
           GetIt.instance<AppUpdateService>().checkForUpdateIfDue;
       final update = await check();
       if (!mounted || update == null) return;
+      // On a TV the pill can't be pressed, so the sideloaded build that can
+      // install its own update asks right away instead.
+      // The pill sits above the router, so the dialog opens on its navigator.
+      if (PlatformDetection.useLeanbackUi && ApkInstaller.isSupported) {
+        final navContext = appRouter.routerDelegate.navigatorKey.currentContext;
+        if (navContext != null && navContext.mounted) {
+          unawaited(showAppUpdateDialog(navContext, update));
+          return;
+        }
+      }
       setState(() => _update = update);
       _entrance.forward();
       _autoDismissTimer = Timer(_autoDismissDuration, _dismiss);

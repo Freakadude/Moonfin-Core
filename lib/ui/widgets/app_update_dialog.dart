@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/services/app_update_service.dart';
 import '../../l10n/app_localizations.dart';
+import '../../util/apk_installer.dart';
 import '../../util/platform_detection.dart';
 import 'track_selector_dialog.dart';
 
@@ -50,27 +51,49 @@ Future<void> showAppUpdateDialog(
     builder: (ctx) => Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (!PlatformDetection.isTV)
+        // The sideloaded Android build installs its own update.
+        if (_canSelfInstall(update))
+          const _UpdateOption(
+            icon: Icons.system_update_rounded,
+            label: 'Install update',
+            value: 'install',
+          )
+        else if (!PlatformDetection.isTV)
           _UpdateOption(
             icon: Icons.download_rounded,
             label: l10n.download,
             value: 'download',
           ),
-        _UpdateOption(
-          icon: Icons.article_outlined,
-          label: l10n.readReleaseNotes,
-          value: 'notes',
-        ),
+        // A TV has no browser to open the notes in.
+        if (!PlatformDetection.isTV)
+          _UpdateOption(
+            icon: Icons.article_outlined,
+            label: l10n.readReleaseNotes,
+            value: 'notes',
+          ),
       ],
     ),
   );
 
   if (choice == null || !context.mounted) return;
 
+  if (choice == 'install') {
+    await _installAndroidUpdate(context, update);
+    return;
+  }
+
   if (choice == 'download' &&
       Platform.isWindows &&
       update.downloadUri.isScheme('https')) {
-    await _downloadAndInstallWindowsUpdate(context, update);
+    await _downloadAndRun(
+      context,
+      update,
+      fileName: 'moonfin_updater.exe',
+      run: (file) async {
+        await Process.start(file.path, [], mode: ProcessStartMode.detached);
+        exit(0);
+      },
+    );
     return;
   }
 
@@ -79,19 +102,133 @@ Future<void> showAppUpdateDialog(
   await launchUrl(uri, mode: LaunchMode.externalApplication);
 }
 
-Future<void> _downloadAndInstallWindowsUpdate(
+bool _canSelfInstall(DesktopUpdateInfo update) =>
+    ApkInstaller.isSupported &&
+    update.downloadUri.isScheme('https') &&
+    update.downloadUri.path.toLowerCase().endsWith('.apk');
+
+/// Downloads the new APK and hands it to Android, which asks for one press of
+/// Install. Moonfin has to be allowed to install apps first, once.
+Future<void> _installAndroidUpdate(
   BuildContext context,
   DesktopUpdateInfo update,
 ) async {
+  if (!await ApkInstaller.canInstall()) {
+    if (!context.mounted) return;
+    final open = await showStyledPlayerDialog<String>(
+      context,
+      title: 'Allow Moonfin to install updates',
+      showCancel: true,
+      builder: (ctx) => const Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: EdgeInsets.fromLTRB(24, 0, 24, 12),
+            child: Text(
+              'Android needs your permission once. In the settings that open, '
+              'allow Moonfin to install unknown apps, then come back and choose '
+              'Install update again.',
+              style: TextStyle(color: Colors.white70, fontSize: 16),
+            ),
+          ),
+          _UpdateOption(
+            icon: Icons.settings_rounded,
+            label: 'Open settings',
+            value: 'settings',
+          ),
+        ],
+      ),
+    );
+    if (open == 'settings') await ApkInstaller.openInstallSettings();
+    return;
+  }
+  if (!context.mounted) return;
+  await _downloadAndRun(
+    context,
+    update,
+    fileName: 'moonfin_update.apk',
+    closeWhenDone: true,
+    run: ApkInstaller.install,
+  );
+}
+
+/// Downloads the update with a progress dialog, then hands the file to [run].
+Future<void> _downloadAndRun(
+  BuildContext context,
+  DesktopUpdateInfo update, {
+  required String fileName,
+  required Future<void> Function(File file) run,
+  bool closeWhenDone = false,
+}) async {
   final l10n = AppLocalizations.of(context);
   final valueNotifier = ValueNotifier<double>(0.0);
   final errorNotifier = ValueNotifier<String?>(null);
+  BuildContext? progressContext;
 
   showStyledPlayerDialog<void>(
     context,
     title: l10n.updating,
     barrierDismissible: false,
-    builder: (dialogContext) => PopScope(
+    builder: (dialogContext) {
+      progressContext = dialogContext;
+      return _progressBody(dialogContext, l10n, valueNotifier, errorNotifier);
+    },
+  );
+
+  try {
+    final tempDir = await getTemporaryDirectory();
+    final file = File('${tempDir.path}${Platform.pathSeparator}$fileName');
+    if (await file.exists()) {
+      await file.delete();
+    }
+
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 15);
+
+    try {
+      final request = await client.getUrl(update.downloadUri);
+      final response = await request.close();
+
+      if (response.statusCode != 200) {
+        throw Exception('Server returned status code ${response.statusCode}');
+      }
+
+      final contentLength = response.contentLength;
+      var downloaded = 0;
+      final sink = file.openWrite();
+
+      await for (final chunk in response) {
+        sink.add(chunk);
+        downloaded += chunk.length;
+        if (contentLength > 0) {
+          valueNotifier.value = downloaded / contentLength;
+        }
+      }
+      await sink.flush();
+      await sink.close();
+    } finally {
+      client.close();
+    }
+
+    await run(file);
+    final dialog = progressContext;
+    if (closeWhenDone && dialog != null && dialog.mounted) {
+      Navigator.of(dialog).pop();
+    }
+  } catch (e) {
+    debugPrint('In-app update failed: $e');
+    errorNotifier.value = l10n.updateDownloadFailed;
+  }
+}
+
+Widget _progressBody(
+  BuildContext dialogContext,
+  AppLocalizations l10n,
+  ValueNotifier<double> valueNotifier,
+  ValueNotifier<String?> errorNotifier,
+) =>
+    PopScope(
       canPop: false,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
@@ -142,55 +279,7 @@ Future<void> _downloadAndInstallWindowsUpdate(
           },
         ),
       ),
-    ),
-  );
-
-  try {
-    final tempDir = await getTemporaryDirectory();
-    final file = File('${tempDir.path}${Platform.pathSeparator}moonfin_updater.exe');
-    if (await file.exists()) {
-      await file.delete();
-    }
-
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 15);
-
-    try {
-      final request = await client.getUrl(update.downloadUri);
-      final response = await request.close();
-
-      if (response.statusCode != 200) {
-        throw Exception('Server returned status code ${response.statusCode}');
-      }
-
-      final contentLength = response.contentLength;
-      var downloaded = 0;
-      final sink = file.openWrite();
-
-      await for (final chunk in response) {
-        sink.add(chunk);
-        downloaded += chunk.length;
-        if (contentLength > 0) {
-          valueNotifier.value = downloaded / contentLength;
-        }
-      }
-      await sink.flush();
-      await sink.close();
-    } finally {
-      client.close();
-    }
-
-    await Process.start(
-      file.path,
-      [],
-      mode: ProcessStartMode.detached,
     );
-    exit(0);
-  } catch (e) {
-    debugPrint('Windows in-app update failed: $e');
-    errorNotifier.value = l10n.updateDownloadFailed;
-  }
-}
 
 class _UpdateOption extends StatelessWidget {
   final IconData icon;

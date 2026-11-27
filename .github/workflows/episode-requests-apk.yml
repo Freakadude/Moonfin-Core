@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: episode-requests-apk
@@ -26,6 +27,8 @@ env:
 jobs:
   apk:
     runs-on: ubuntu-26.04
+    # A build normally takes about 20 minutes. A hung one is stopped and reported.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
 
@@ -81,16 +84,13 @@ jobs:
           echo "number=$((1000 + ${{ github.run_number }}))" >> "$GITHUB_OUTPUT"
           echo "tag=v${BASE}.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
-      - name: Analyze the changed files
+      # The whole app, but only errors stop the build: upstream's own style
+      # notes are left alone, while anything an upstream change broke in our
+      # code shows up here before the slow build starts.
+      - name: Analyze
         run: |
           flutter pub get
-          flutter analyze --no-fatal-infos \
-            lib/data/models/sonarr_episode.dart \
-            lib/data/repositories/episode_request_repository.dart \
-            lib/data/services/app_update_service.dart \
-            lib/data/viewmodels/item_detail_view_model.dart \
-            lib/ui/screens/detail/episode_requests \
-            lib/ui/screens/detail/minimalist
+          flutter analyze --no-fatal-infos --no-fatal-warnings lib
 
       - name: Build APK
         run: |
@@ -112,3 +112,30 @@ jobs:
             --title "Moonfin ${{ steps.meta.outputs.name }} (episode requests)" \
             --notes "Personal build of Moonfin with single-episode requests to Sonarr. Has its own application id, so it installs next to the Play Store app. Latest APK: https://github.com/${{ github.repository }}/releases/latest/download/Moonfin.apk" \
             --latest
+
+      # Moonfin Web is bundled into the Moonbase plugin, so the plugin is
+      # rebuilt from this app code too. That needs the automation token, since
+      # this workflow's own token can't start workflows in the plugin fork.
+      - name: Rebuild the plugin's Moonfin Web
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::AUTOMATION_TOKEN isn't set, so the plugin wasn't rebuilt with this app code."
+            exit 0
+          fi
+          gh workflow run "Episode requests release" -R Freakadude/Moonfin-Plugin --ref feature/episode-requests
+
+      - name: Report a failed build
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create needs-attention --color D93F0B --description "Something needs a look" 2>/dev/null || true
+          gh issue create --label needs-attention \
+            --title "⚠ Action needed: the Moonfin app build failed ($(git rev-parse --short HEAD))" \
+            --body "The episode-requests build of the Moonfin app failed, so no new APK was published and your TVs keep their current version.
+
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          Open the Moonfin Episode Downloader project in Claude and ask it to look at this failed build."
