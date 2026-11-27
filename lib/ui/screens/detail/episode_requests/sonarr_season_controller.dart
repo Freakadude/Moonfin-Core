@@ -29,6 +29,11 @@ class SonarrSeasonController extends ChangeNotifier {
 
   static const _pollEvery = Duration(seconds: 10);
 
+  /// While Sonarr has a file Jellyfin hasn't picked up yet. Moonbase asks
+  /// Jellyfin to scan the series, so this usually settles within a minute.
+  static const _waitEvery = Duration(seconds: 15);
+  static const _maxWaitPolls = 24;
+
   /// Whether the signed-in user may use episode requests on this server.
   static bool get available {
     final getIt = GetIt.instance;
@@ -46,6 +51,11 @@ class SonarrSeasonController extends ChangeNotifier {
   bool _requesting = false;
   bool _disposed = false;
   int _generation = 0;
+  int _waitPolls = 0;
+
+  /// Called when an episode Jellyfin didn't have shows up in the library, so
+  /// the page can reload its own episode list and show the real one.
+  VoidCallback? onLibraryChanged;
 
   String? get seriesId => _seriesId;
   bool get requesting => _requesting;
@@ -75,6 +85,7 @@ class SonarrSeasonController extends ChangeNotifier {
     _seriesId = seriesId;
     _season = season;
     _data = null;
+    _waitPolls = 0;
     _poll?.cancel();
     unawaited(_load());
   }
@@ -87,17 +98,27 @@ class SonarrSeasonController extends ChangeNotifier {
     final season = _season;
     if (seriesId == null || season == null) return;
     final generation = ++_generation;
+    final missingBefore = {for (final e in missingFromLibrary) e.id};
     final data = await _repository.season(seriesId, season);
     if (_disposed || generation != _generation) return;
     _data = data;
+    final arrived = _episodes.any(
+      (e) => e.inLibrary && missingBefore.contains(e.id),
+    );
     notifyListeners();
+    if (arrived) onLibraryChanged?.call();
     _schedulePoll();
   }
 
   void _schedulePoll() {
     _poll?.cancel();
     if (_episodes.any((e) => e.state.isActive)) {
+      _waitPolls = 0;
       _poll = Timer(_pollEvery, () => unawaited(_load()));
+    } else if (_episodes.any((e) => e.waitingForJellyfin) &&
+        _waitPolls < _maxWaitPolls) {
+      _waitPolls++;
+      _poll = Timer(_waitEvery, () => unawaited(_load()));
     }
   }
 
@@ -108,6 +129,7 @@ class SonarrSeasonController extends ChangeNotifier {
       return const EpisodeRequestResult(error: 'noEpisodes');
     }
     _requesting = true;
+    _waitPolls = 0;
     notifyListeners();
     try {
       return await _repository.request(seriesId, sonarrEpisodeIds);

@@ -71,8 +71,11 @@ android {
             versionCode = flutter.versionCode
             versionName = flutter.versionName
             ndk { abiFilters += abis }
+            // MOONFIN_APP_NAME overrides the launcher name, for a personal build
+            // that keeps its own id but should still read as Moonfin.
             manifestPlaceholders["appName"] =
-                if (testIdSuffix.isEmpty()) baseAppName else "$baseAppName Test"
+                System.getenv("MOONFIN_APP_NAME")?.takeIf { it.isNotBlank() }
+                    ?: if (testIdSuffix.isEmpty()) baseAppName else "$baseAppName Test"
         }
         create("mobile-beta") {
             dimension = "device"

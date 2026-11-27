@@ -97,8 +97,25 @@ class _MinimalistEpisodesSectionState extends State<MinimalistEpisodesSection> {
     super.initState();
     _beginEpisodesLoad();
     if (SonarrSeasonController.available) {
-      _sonarr = SonarrSeasonController()..addListener(_onSonarrChanged);
+      _sonarr = SonarrSeasonController()
+        ..addListener(_onSonarrChanged)
+        ..onLibraryChanged = _reloadLibraryEpisodes;
     }
+  }
+
+  /// Jellyfin picked up an episode that was only on disk, so the page's own
+  /// list is reloaded and the real, playable episode takes the dimmed card's
+  /// place.
+  void _reloadLibraryEpisodes() {
+    final viewModel = _vm;
+    final reload = _isSeason
+        ? viewModel.refreshSeasonEpisodes()
+        : viewModel.refreshSeriesEpisodes();
+    unawaited(
+      reload.whenComplete(() {
+        if (mounted && identical(_vm, viewModel)) setState(() {});
+      }),
+    );
   }
 
   @override

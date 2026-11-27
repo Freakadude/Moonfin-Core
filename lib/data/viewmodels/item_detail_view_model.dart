@@ -1395,6 +1395,10 @@ class ItemDetailViewModel extends ChangeNotifier {
     return loadAllSeriesEpisodes();
   }
 
+  /// Reloads the episodes of the season this page shows, such as after the
+  /// server picked up a newly downloaded one.
+  Future<void> refreshSeasonEpisodes() => _loadEpisodes();
+
   int _castLoadGeneration = 0;
   List<Map<String, dynamic>> _parentActors = const [];
   List<Map<String, dynamic>> get parentActors => _parentActors;

@@ -41,7 +41,8 @@ abstract final class EpisodeRequestText {
   /// A longer line for the dialog, saying what the status means.
   static String explain(SonarrEpisode e) {
     if (e.waitingForJellyfin) {
-      return 'Sonarr has the file. Jellyfin will show it after its next library scan.';
+      return 'Sonarr has the file. Jellyfin is scanning the series for it, and it '
+          'shows up here as soon as Jellyfin has it.';
     }
     return switch (e.state) {
       SonarrEpisodeState.missing => 'Not in your library and not requested.',
@@ -88,7 +89,7 @@ abstract final class EpisodeRequestText {
         'alreadySearching' => 'Sonarr is already searching for it.',
         'alreadyAvailable' => 'Already in your library.',
         'onDiskWaitingForJellyfin' =>
-          'Already on disk. Jellyfin will show it after its next library scan.',
+          'Already on disk. Jellyfin is scanning for it, so it shows up in a moment.',
         'notAired' => "It hasn't aired yet.",
         _ => 'Nothing needed requesting.',
       },

@@ -47,7 +47,14 @@ class AppUpdateService {
   AppUpdateService(this._store, this._userPreferences);
 
   static const _latestReleaseHost = 'api.github.com';
-  static const _latestReleasePath = '/repos/Moonfin-Client/Moonfin-Core/releases/latest';
+
+  /// The GitHub repository whose latest release is checked. A personal build
+  /// passes its own fork with --dart-define=MOONFIN_UPDATE_REPO=owner/name.
+  static const _updateRepo = String.fromEnvironment(
+    'MOONFIN_UPDATE_REPO',
+    defaultValue: 'Moonfin-Client/Moonfin-Core',
+  );
+  static const _latestReleasePath = '/repos/$_updateRepo/releases/latest';
   static const _checkCooldown = Duration(hours: 24);
 
   static const _lastCheckMsKey = 'app_update_last_check_ms';
@@ -227,7 +234,7 @@ class AppUpdateService {
       }
 
       final htmlUrl = decoded['html_url']?.toString() ??
-          'https://github.com/Moonfin-Client/Moonfin-Core/releases/latest';
+          'https://github.com/$_updateRepo/releases/latest';
 
       final assetsJson = decoded['assets'];
       final assets = <_ReleaseAsset>[];

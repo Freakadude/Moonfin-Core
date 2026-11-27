@@ -1,7 +1,7 @@
-# Builds "Moonfin Test", the episode-requests version of the Android/Google TV
-# app, and publishes it as a GitHub release. It installs next to the Play Store
-# app. Latest APK:
-#   https://github.com/Freakadude/Moonfin-Core/releases/latest/download/Moonfin-Test.apk
+# Builds the episode-requests version of the Android/Google TV app, named
+# "Moonfin", and publishes it as a GitHub release. It has its own application
+# id, so it installs next to the Play Store app instead of over it. Latest APK:
+#   https://github.com/Freakadude/Moonfin-Core/releases/latest/download/Moonfin.apk
 name: Episode requests APK
 
 on:
@@ -21,6 +21,7 @@ env:
   # A separate application id, so this installs next to the Play Store app
   # instead of over it. It also leaves Firebase push out (see build.gradle.kts).
   MOONFIN_TEST_ID_SUFFIX: '.episodes'
+  MOONFIN_APP_NAME: 'Moonfin'
 
 jobs:
   apk:
@@ -73,10 +74,12 @@ jobs:
         run: |
           VERSION_LINE=$(grep '^version:' pubspec.yaml | sed 's/version:[[:space:]]*//' | tr -d '[:space:]')
           BASE=$(printf '%s' "$VERSION_LINE" | cut -d'+' -f1)
-          # Every run gets a higher build number, so Android takes it as an update.
-          echo "name=${BASE}-ep.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          # Every run gets a higher version and build number, so Android takes
+          # it as an update and the in-app checker sees it as newer. The tag
+          # starts with v, so upstream's release workflow ignores it.
+          echo "name=${BASE}.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
           echo "number=$((1000 + ${{ github.run_number }}))" >> "$GITHUB_OUTPUT"
-          echo "tag=apk-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${BASE}.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
       - name: Analyze the changed files
         run: |
@@ -84,6 +87,8 @@ jobs:
           flutter analyze --no-fatal-infos \
             lib/data/models/sonarr_episode.dart \
             lib/data/repositories/episode_request_repository.dart \
+            lib/data/services/app_update_service.dart \
+            lib/data/viewmodels/item_detail_view_model.dart \
             lib/ui/screens/detail/episode_requests \
             lib/ui/screens/detail/minimalist
 
@@ -93,16 +98,17 @@ jobs:
             --flavor mobile \
             --build-name "${{ steps.meta.outputs.name }}" \
             --build-number "${{ steps.meta.outputs.number }}" \
-            --dart-define=DISTRIBUTION_CHANNEL=apk
-          cp build/app/outputs/flutter-apk/app-mobile-release.apk Moonfin-Test.apk
-          ls -la Moonfin-Test.apk
+            --dart-define=DISTRIBUTION_CHANNEL=apk \
+            --dart-define=MOONFIN_UPDATE_REPO=${{ github.repository }}
+          cp build/app/outputs/flutter-apk/app-mobile-release.apk Moonfin.apk
+          ls -la Moonfin.apk
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.meta.outputs.tag }}" Moonfin-Test.apk \
+          gh release create "${{ steps.meta.outputs.tag }}" Moonfin.apk \
             --target "$GITHUB_SHA" \
-            --title "Moonfin Test ${{ steps.meta.outputs.name }} (episode requests)" \
-            --notes "Personal build of Moonfin with single-episode requests to Sonarr. Installs next to the Play Store app as Moonfin Test. Latest APK: https://github.com/${{ github.repository }}/releases/latest/download/Moonfin-Test.apk" \
+            --title "Moonfin ${{ steps.meta.outputs.name }} (episode requests)" \
+            --notes "Personal build of Moonfin with single-episode requests to Sonarr. Has its own application id, so it installs next to the Play Store app. Latest APK: https://github.com/${{ github.repository }}/releases/latest/download/Moonfin.apk" \
             --latest
