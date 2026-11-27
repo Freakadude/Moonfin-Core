@@ -94,6 +94,7 @@ void resetUserScopedSingletons() {
   unregister<MediaBarRepository>();
   unregister<TmdbRepository>();
   unregister<MdbListRepository>();
+  unregister<EpisodeRequestRepository>();
   unregister<CalendarRepository>();
   unregister<AnimeMarkerRepository>();
   unregister<PosterBadgeRepository>();
