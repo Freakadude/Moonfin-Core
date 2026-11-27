@@ -1,0 +1,79 @@
+# Weekly check for new official releases of Moonfin (the app) and Moonbase (the
+# Jellyfin plugin). The personal episode-requests builds are based on the
+# versions below. When upstream has released something newer, this opens one
+# issue per new release in this fork, which GitHub emails to the owner.
+#
+# After updating the builds to a newer upstream release, change the baseline
+# versions below to match.
+name: Upstream release check
+
+on:
+  schedule:
+    - cron: '0 7 * * 1' # Mondays 07:00 UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+env:
+  APP_REPO: Moonfin-Client/Moonfin-Core
+  APP_BASELINE: '3.1.1'
+  PLUGIN_REPO: Moonfin-Client/Plugin
+  PLUGIN_BASELINE: '3.1.1'
+
+jobs:
+  check:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Compare upstream releases with the baselines
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          check() {
+            local label="$1" repo="$2" baseline="$3"
+            local latest url published title
+            latest=$(gh release view -R "$repo" --json tagName -q .tagName)
+            url=$(gh release view -R "$repo" --json url -q .url)
+            published=$(gh release view -R "$repo" --json publishedAt -q .publishedAt)
+            echo "$label: baseline $baseline, latest upstream release $latest"
+
+            if [ "$latest" = "$baseline" ]; then
+              echo "  up to date"
+              return
+            fi
+
+            # Only newer releases count, so a baseline set ahead of upstream stays quiet.
+            if [ "$(printf '%s\n%s\n' "$baseline" "$latest" | sort -V | tail -1)" != "$latest" ]; then
+              echo "  upstream $latest is not newer than $baseline"
+              return
+            fi
+
+            title="Upstream $label $latest released (your build is based on $baseline)"
+            if gh issue list -R "$GITHUB_REPOSITORY" --state all --search "\"$title\" in:title" --json number -q '.[].number' | grep -q .; then
+              echo "  already reported"
+              return
+            fi
+
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --body "$(cat <<EOF
+          The official **$label** project ($repo) published release **$latest** on ${published%%T*}.
+          Your episode-requests build is based on **$baseline**.
+
+          Release notes: $url
+
+          **What to do:** read the notes and decide whether the changes matter to you. Nothing changes
+          on your devices until you update. To update, open the Moonfin Episode Downloader project in
+          Claude and ask it to "update the episode-requests builds to upstream $label $latest". That
+          moves the episode-request changes onto the new version, the forks rebuild the plugin and the
+          app, and the baselines in \`.github/workflows/upstream-release-check.yml\` are raised.
+
+          You can close this issue once you've decided.
+          EOF
+          )"
+            echo "  opened an issue"
+          }
+
+          check "Moonfin app" "$APP_REPO" "$APP_BASELINE"
+          check "Moonbase plugin" "$PLUGIN_REPO" "$PLUGIN_BASELINE"
